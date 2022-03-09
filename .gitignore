@@ -1,3 +1,4 @@
 venv
 .idea
 Parser/settings.ini
+Parser/__pycache__

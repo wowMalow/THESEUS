@@ -1,19 +1,79 @@
 import instaloader
 import requests
+import random
 from PIL import Image
 from tqdm import tqdm
 import os
-import configparser
 import re
 from queue import Queue
 import pytesseract
 pytesseract.pytesseract.tesseract_cmd = r'D:\Tesseract\tesseract.exe'
 
 
-def change_agent(agents):
-    acting_agent = agents.get()
-    agents.put(acting_agent)
-    return acting_agent
+class Agent(instaloader.Instaloader):
+    """
+    Extended instaloader class with username(str)
+    to catch baned accounts from agents list in settings.ini
+    """
+    def __init__(self, **args):
+        super().__init__(**args)
+        self.username = ''
+
+    def login(self, user, password):
+        super().login(user, password)
+        self.username = user
+
+
+def get_agents(agents_count=9999):
+    """
+    Returns Queue of instagram sessions objects from different users
+    """
+    with open('settings.ini', 'r') as config:
+        data = config.readlines()
+        random.shuffle(data)
+        agents = Queue()
+        agents_in_action = 0
+        first_fail = []
+
+        for line in tqdm(data):
+            user, password = line.split()
+            try:
+                insta_session = Agent(max_connection_attempts=6, request_timeout=1000.0)
+                insta_session.login(user, password)
+                agents.put(insta_session)
+                agents_in_action += 1
+                if agents_in_action >= agents_count:
+                    break
+            except instaloader.exceptions.ConnectionException:
+                first_fail.append((user, password))
+                continue
+        print(f'{agents_count} agents are ready to PARSE!')
+
+        second_fail = []
+        if agents_count > 50:
+            for loser in tqdm(first_fail):
+                user, password = loser
+                try:
+                    insta_session = Agent(max_connection_attempts=6, request_timeout=1000.0)
+                    insta_session.login(user, password)
+                    agents.put(insta_session)
+                    agents_in_action += 1
+                except instaloader.exceptions.ConnectionException:
+                    second_fail.append((user, password))
+                    continue
+            print(f'{agents_in_action} active agents out of {len(data)}\n'
+                  f'{len(second_fail)} are still lazy bastards')
+
+    return agents
+
+
+def change_agent(agents: Queue):
+    """
+    Login into next account from queue and puts in the back
+    """
+    agent_session = agents.get()
+    agents.put(agent_session)
+    return agent_session
 
 
 def get_text_from_image(url: str):
@@ -82,7 +142,7 @@ def get_posts_list(username: str, instance):
         for post in tqdm(insta_diva.get_posts()):
             posts.append(post.shortcode)
             posts_count += 1
-            if posts_count > 1500:  # It's enough for one person (Just because!)
+            if posts_count > 2000:  # It's enough for one person (Just because!)
                 break
 
         with open(f'data/task_{file_name}.txt', 'w', encoding='utf-8') as file:
@@ -166,7 +226,7 @@ def update_task_file(done_posts: list, file_name: str):
         os.remove(f'data/task_{file_name}.txt')
 
 
-def gypsy_parse(username: str, start=0):
+def gypsy_parse(username: str):
     '''
     Parse all posts from instagram @username and collect them
     in username.txt file
@@ -174,20 +234,18 @@ def gypsy_parse(username: str, start=0):
     :param username: str
     :return: txt file
     '''
-    config = configparser.ConfigParser()
-    config.read("settings.ini")
-    user = config.get('instagram', 'user')
-    password = config.get('instagram', 'password')
+    agents = get_agents(20)
 
-    insta_session = instaloader.Instaloader()  # Get instance of instagram
-    insta_session.login(user, password)
+    insta_session = change_agent(agents)  # Get instance of instagram
 
     gypsy_name = username
     file_name = get_filename(gypsy_name)
 
     gypsy_posts = get_posts_list(gypsy_name, insta_session)
     done_posts = []
-    for post in tqdm(gypsy_posts[start:]):
+    agent_activity = 0
+    
+    for post in tqdm(gypsy_posts):
         try:
             full_post = get_all_text(post, insta_session)
             if full_post:
@@ -195,8 +253,25 @@ def gypsy_parse(username: str, start=0):
                     file.write('<STARTOFPOST> ')
                     file.write(full_post)
 
+            agent_activity += 1
+            if agent_activity > 1:
+                agent_activity = 0
+                insta_session = change_agent(agents)
+
             done_posts.append(post)
 
+        except instaloader.exceptions.TooManyRequestsException:
+            print(f'Too many requests from: {insta_session.username}')
+            insta_session = change_agent(agents)
+            continue
+        except instaloader.exceptions.QueryReturnedBadRequestException:
+            print(f'Bad request from: {insta_session.username}')
+            insta_session = change_agent(agents)
+            continue
+        except requests.exceptions.ConnectionError:
+            print('Connection aborted')
+            insta_session = change_agent(agents)
+            continue
         except Exception as ex:
             print(ex)
             break
@@ -205,4 +280,4 @@ def gypsy_parse(username: str, start=0):
 
 
 if __name__ == "__main__":
-    gypsy_parse('natasha_astrolog')
+    gypsy_parse('transerfing_center')

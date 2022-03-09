@@ -1,22 +1,22 @@
 import instaloader
 import configparser
 from tqdm import tqdm
+from queue import Queue
+import insta as utils
 
-sorts_of_shit = ["астролог", "нумеролог", "оккультизм", "экстрасенсорика",
-                 "космоэнергетика", "биоэнергетика", "ясновидение", "рэйки",
-                 "гадания", "хиромантия", "спиритизм", "целительство",
-                 "каббала", "парапсихология", "трансерфинг", "ченнелер",
-                 "дизайн человека", "осознанные сновидения", "контактер",
-                 "тетахилинг", "гипнолог", "регрессолог", "коуч", "мотиватор",
-                 "руны", "веды", "аюрведа", "проводник", "сексолог", "расстановки по хеллингеру"]
+# sorts_of_shit = ["астролог", "нумеролог", "оккультизм", "экстрасенсорика",
+#                  "космоэнергетика", "биоэнергетика", "ясновидение", "рэйки",
+#                  "гадания", "хиромантия", "спиритизм", "целительство",
+#                  "каббала", "парапсихология", "трансерфинг", "ченнелер",
+#                  "дизайн человека", "осознанные сновидения", "контактер",
+#                  "тетахилинг", "гипнолог", "регрессолог", "коуч", "мотиватор",
+#                  "руны", "веды", "аюрведа", "проводник", "сексолог",
+#                  "расстановки по хеллингеру", "марафон"]
 
-config = configparser.ConfigParser()
-config.read("settings.ini")
-user = config.get('instagram', 'user')
-password = config.get('instagram', 'password')
+sorts_of_shit = ["марафон"]
 
-insta_session = instaloader.Instaloader()  # Get instance of instagram
-insta_session.login(user, password)
+agents = utils.get_agents()
+insta_session = utils.change_agent(agents)
 
 
 def users_from_word(topic: str, stats: dict):
