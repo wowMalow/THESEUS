@@ -6,6 +6,7 @@ from tqdm import tqdm
 import os
 import re
 from queue import Queue
+import logging
 import pytesseract
 pytesseract.pytesseract.tesseract_cmd = r'D:\Tesseract\tesseract.exe'
 
@@ -41,13 +42,15 @@ def get_agents(agents_count=9999):
                 insta_session = Agent(max_connection_attempts=6, request_timeout=1000.0)
                 insta_session.login(user, password)
                 agents.put(insta_session)
+                logger.info(f'{user} successfully logged-in')
                 agents_in_action += 1
                 if agents_in_action >= agents_count:
                     break
             except instaloader.exceptions.ConnectionException:
                 first_fail.append((user, password))
+                logger.info(f'{user} failed login')
                 continue
-        print(f'{agents_count} agents are ready to PARSE!')
+
 
         second_fail = []
         if agents_count > 50:
@@ -58,12 +61,15 @@ def get_agents(agents_count=9999):
                     insta_session.login(user, password)
                     agents.put(insta_session)
                     agents_in_action += 1
+                    logger.info(f'{user} successfully logged-in')
                 except instaloader.exceptions.ConnectionException:
                     second_fail.append((user, password))
+                    logger.info(f'{user} failed login')
                     continue
-            print(f'{agents_in_action} active agents out of {len(data)}\n'
-                  f'{len(second_fail)} are still lazy bastards')
-
+            logger.info(f'{agents_in_action} active agents out of {len(data)} '
+                        f'{len(second_fail)} are still lazy bastards')
+        print(f'{agents_in_action} agents are ready to PARSE!')
+        logger.info(f'{agents_in_action} agents are ready to PARSE!')
     return agents
 
 
@@ -74,6 +80,21 @@ def change_agent(agents: Queue):
     agent_session = agents.get()
     agents.put(agent_session)
     return agent_session
+
+
+def set_logging():
+    logger = logging.getLogger("Gypsy_Parser")
+    logger.setLevel(logging.INFO)
+
+    # create the logging file handler
+    fh = logging.FileHandler("session.log", mode='w')
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    fh.setFormatter(formatter)
+
+    # add handler to logger object
+    logger.addHandler(fh)
+    logger.info("Program started")
+    return logger
 
 
 def get_text_from_image(url: str):
@@ -131,10 +152,10 @@ def get_posts_list(username: str, instance):
         if os.path.exists(f'data/task_{file_name}.txt'):
             with open(f'data/task_{file_name}.txt', 'r', encoding='utf-8') as file:
                 posts = file.read().split()
-            print('Read task from file')
+            logger.info(f'Read task from file task_{file_name}')
         else:
             posts = []  # Parsing was done earlier
-            print('Job is done')
+            logger.info('Parsing was done earlier')
     else:
         insta_diva = instaloader.Profile.from_username(instance.context, username)  # create object of account
         posts = []  # collecting posts shortcodes
@@ -147,7 +168,7 @@ def get_posts_list(username: str, instance):
 
         with open(f'data/task_{file_name}.txt', 'w', encoding='utf-8') as file:
             file.write(' '.join(posts))
-        print('Task file created')
+        logger.info(f'Task file task_{file_name}.txt created')
 
     return posts
 
@@ -175,17 +196,20 @@ def get_all_text(post: str, instance):
         return ''
 
     carousel_text = ''  # parse text from all images in carousel
-    if insta_post.mediacount > 1:
-        for i, carousel in enumerate(insta_post.get_sidecar_nodes()):  # Get all pics from carousel
-            if i == 0:
-                continue
-            url = carousel.display_url
-            image_text = get_text_from_image(url)
-            image_text = re.sub(r'\n', ' ', image_text)
-            if image_text:
-                symbols, words, avg_word_len = get_metrics(image_text)
-                if (words > 20) & (avg_word_len > 4):
-                    carousel_text += image_text + ' '
+    try:
+        if insta_post.mediacount > 1:
+            for i, carousel in enumerate(insta_post.get_sidecar_nodes()):  # Get all pics from carousel
+                if i == 0:
+                    continue
+                url = carousel.display_url
+                image_text = get_text_from_image(url)
+                image_text = re.sub(r'\n', ' ', image_text)
+                if image_text:
+                    symbols, words, avg_word_len = get_metrics(image_text)
+                    if (words > 20) & (avg_word_len > 4):
+                        carousel_text += image_text + ' '
+    except Exception as ex:
+        logger.info(f'Carousel text recognition: {ex}')
 
     comments_text = ''  # parse first owner's comments
     for comment in insta_post.get_comments():
@@ -209,24 +233,54 @@ def update_task_file(done_posts: list, file_name: str):
 
     Updates task file.
     """
-    with open(f'data/task_{file_name}.txt', 'r', encoding='utf-8') as file:
-        posts = file.read().split()
+    if done_posts:
+        with open(f'data/task_{file_name}.txt', 'r', encoding='utf-8') as file:
+            posts = file.read().split()
 
-    for post in done_posts:
+        for post in done_posts:
+            try:
+                del posts[posts.index(post)]
+            except:
+                continue
+
+        if posts:
+            with open(f'data/task_{file_name}.txt', 'w', encoding='utf-8') as file:
+                file.write(' '.join(posts))
+            logger.info(f'task_{file_name}.txt updated')
+        else:
+            os.remove(f'data/task_{file_name}.txt')
+            logger.info(f'task_{file_name}.txt removed')
+
+
+def update_progress(done_profiles: list, file_name: str):
+    """
+    Delete parsed profiles from task_file
+    and updates done_file.
+    """
+    with open(f'{file_name}.txt', 'r', encoding='utf-8') as file:
+        profiles = file.read().split()
+
+    with open(f'{file_name}_done.txt', 'a', encoding='utf-8') as file:
+        for line in done_profiles:
+            file.write(f'{line}\n')
+    logger.info(f'{file_name}_done.txt updated')
+
+    for username in done_profiles:
         try:
-            del posts[posts.index(post)]
-        except Exception as ex:
-            print('Post doesnt exist in task file')
-            print(ex)
+            del profiles[profiles.index(username)]
+        except Exception:
+            continue
 
-    if posts:
-        with open(f'data/task_{file_name}.txt', 'w', encoding='utf-8') as file:
-            file.write(' '.join(posts))
+    if profiles:
+        with open(f'{file_name}.txt', 'w', encoding='utf-8') as file:
+            for line in profiles:
+                file.write(f'{line}\n')
+        logger.info(f'{file_name}.txt updated')
     else:
-        os.remove(f'data/task_{file_name}.txt')
+        os.remove(f'{file_name}.txt')
 
 
-def gypsy_parse(username: str):
+def gypsy_parse(username: str, agents: Queue):
     '''
     Parse all posts from instagram @username and collect them
     in username.txt file
@@ -234,50 +288,84 @@ def gypsy_parse(username: str):
     :param username: str
     :return: txt file
     '''
-    agents = get_agents(20)
+    def post_parsing(posts: list, instance: Agent, profile: str):
+        """
+        Post parsing routine
+        """
+        file_name = get_filename(profile)
+        done_posts = []
+        agent_activity = 0
+
+        for post in tqdm(posts):
+            logger.info(f'Start parsing post: {post}')
+            while True:  # next post ONLY after parsing previous one
+                try:
+                    full_post = get_all_text(post, instance)
+                    if full_post:
+                        with open(f'data/{file_name}.txt', 'a', encoding='utf-8') as file:
+                            file.write('<STARTOFPOST> ')
+                            file.write(full_post)
+
+                    agent_activity += 1
+                    if agent_activity > 1:
+                        agent_activity = 0
+                        instance = change_agent(agents)
+
+                    done_posts.append(post)
+                    logger.info(f'Post {post} parsed')
+                    break
+
+                except instaloader.exceptions.TooManyRequestsException:
+                    logger.info(f'Too many requests from: {instance.username}')
+                    instance = change_agent(agents)
+                except instaloader.exceptions.QueryReturnedBadRequestException:
+                    logger.info(f'Bad request from: {instance.username}')
+                    instance = change_agent(agents)
+                except requests.exceptions.ConnectionError:
+                    logger.info(f'Connection aborted on {instance.username}')
+                    instance = change_agent(agents)
+                except Exception as ex:
+                    logger.info(f'UNKNOWN ERROR in post_parsing: {ex}')
+                finally:
+                    try:
+                        update_task_file(done_posts, file_name)
+                        done_posts = []
+                    except Exception as ex:
+                        logger.info(f'UNKNOWN ERROR while updating task_file: {ex}')
+
+        update_task_file(done_posts, file_name)
 
     insta_session = change_agent(agents)  # Get instance of instagram
-
     gypsy_name = username
-    file_name = get_filename(gypsy_name)
-
     gypsy_posts = get_posts_list(gypsy_name, insta_session)
-    done_posts = []
-    agent_activity = 0
-    
-    for post in tqdm(gypsy_posts):
-        try:
-            full_post = get_all_text(post, insta_session)
-            if full_post:
-                with open(f'data/{file_name}.txt', 'a', encoding='utf-8') as file:
-                    file.write('<STARTOFPOST> ')
-                    file.write(full_post)
+    post_parsing(gypsy_posts, insta_session, gypsy_name)
 
-            agent_activity += 1
-            if agent_activity > 1:
-                agent_activity = 0
-                insta_session = change_agent(agents)
 
-            done_posts.append(post)
+def parsing_by_taskfile(filename):
+    with open(f'{filename}.txt', 'r') as file:
+        profiles = file.read().split()
 
-        except instaloader.exceptions.TooManyRequestsException:
-            print(f'Too many requests from: {insta_session.username}')
-            insta_session = change_agent(agents)
-            continue
-        except instaloader.exceptions.QueryReturnedBadRequestException:
-            print(f'Bad request from: {insta_session.username}')
-            insta_session = change_agent(agents)
-            continue
-        except requests.exceptions.ConnectionError:
-            print('Connection aborted')
-            insta_session = change_agent(agents)
-            continue
-        except Exception as ex:
-            print(ex)
-            break
+    agents = get_agents()
+    done_profiles = []
 
-    update_task_file(done_posts, file_name)
+    for username in profiles:
+        print(f'Start parsing @{username}')
+        logger.info(f'Start parsing {username}')
+        while True:
+            try:
+                gypsy_parse(username, agents)
+                done_profiles.append(username)
+                update_progress(done_profiles, filename)
+                done_profiles = []
+                logger.info(f'{username} parsed')
+                break
+            except Exception as ex:
+                logger.info(f'ERROR in parsing_by_taskfile: {ex}')
+
+    update_progress(done_profiles, filename)
+    logger.info('THIS IS THE END, CONGRATULATIONS!!!!')
 
 
 if __name__ == "__main__":
-    gypsy_parse('transerfing_center')
+    logger = set_logging()
+    parsing_by_taskfile('gypsy_task')
