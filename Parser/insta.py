@@ -8,7 +8,7 @@ import re
 from queue import Queue
 import logging
 import pytesseract
-pytesseract.pytesseract.tesseract_cmd = r'D:\Tesseract\tesseract.exe'
+pytesseract.pytesseract.tesseract_cmd = r'D:\Program Files\Tesseract-OCR\tesseract.exe'
 
 
 class Agent(instaloader.Instaloader):
